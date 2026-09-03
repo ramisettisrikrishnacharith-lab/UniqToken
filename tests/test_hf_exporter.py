@@ -50,14 +50,15 @@ class PushToHubTests(unittest.TestCase):
         captured: dict[str, Any] = {}
         commit_url = "https://huggingface.co/test-user/test-repo/commit/abc123"
 
-        def _upload_folder_side_effect(**kwargs: Any) -> str:
+        def _upload_folder_side_effect(**kwargs: Any) -> Any:
             captured["kwargs"] = kwargs
             folder = kwargs["folder_path"]
             # Files must already be staged while the temp dir is alive.
             captured["staged_files"] = sorted(os.listdir(folder))
             with open(os.path.join(folder, "README.md"), encoding="utf-8") as f:
                 captured["readme"] = f.read()
-            return commit_url
+            # Mirrors huggingface_hub.CommitInfo: only `commit_url` is read by push_to_hub.
+            return types.SimpleNamespace(commit_url=commit_url)
 
         with _huggingface_hub_module(), patch("huggingface_hub.HfApi") as mock_hf_api:
             mock_api = MagicMock()
@@ -114,6 +115,16 @@ class PushToHubTests(unittest.TestCase):
         for bad_repo_id in ("", "noslash"):
             with self.assertRaises(ValueError):
                 HuggingFaceExporter.push_to_hub(self.tokenizer, bad_repo_id)
+
+    def test_push_to_hub_rejects_run_as_future(self) -> None:
+        # A background Future would read from the temporary staging directory after it is deleted.
+        with _huggingface_hub_module(), patch("huggingface_hub.HfApi") as mock_hf_api:
+            mock_api = MagicMock()
+            mock_hf_api.return_value = mock_api
+            with self.assertRaises(ValueError):
+                HuggingFaceExporter.push_to_hub(self.tokenizer, "test-user/test-repo", run_as_future=True)
+            mock_api.create_repo.assert_not_called()
+            mock_api.upload_folder.assert_not_called()
 
     def test_push_to_hub_missing_dependency_raises_helpful_import_error(self) -> None:
         with patch.dict(sys.modules, {"huggingface_hub": None}):

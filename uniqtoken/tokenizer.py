@@ -857,7 +857,7 @@ class CustomTokenizer:
             **kwargs: Forwarded to ``HfApi.upload_folder``.
 
         Returns:
-            The upload commit URL returned by ``HfApi.upload_folder``.
+            The commit URL of the completed synchronous upload.
         """
         from .hf_exporter import HuggingFaceExporter
 

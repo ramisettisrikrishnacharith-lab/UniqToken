@@ -253,15 +253,21 @@ class HuggingFaceExporter:
                 ``revision``).
 
         Returns:
-            The upload commit URL returned by ``HfApi.upload_folder``.
+            The commit URL of the completed synchronous upload.
 
         Raises:
-            ValueError: If ``repo_id`` is empty or not of the form ``"owner/model"``.
+            ValueError: If ``repo_id`` is empty or not of the form ``"owner/model"``,
+                or if ``run_as_future=True`` is passed.
             ImportError: If ``huggingface_hub`` is not installed. Run
                 ``pip install "uniqtoken[huggingface]"``.
         """
         if not repo_id or "/" not in repo_id:
             raise ValueError(f"repo_id must look like 'owner/model', got {repo_id!r}")
+        if kwargs.get("run_as_future"):
+            raise ValueError(
+                "push_to_hub does not support run_as_future=True: the background upload would read "
+                "from a temporary staging directory that is deleted before it completes."
+            )
         try:
             from huggingface_hub import HfApi
         except ImportError as exc:
@@ -293,7 +299,12 @@ class HuggingFaceExporter:
             api = HfApi(token=token)
             # Repository visibility is set at creation time: upload_folder accepts no `private` argument.
             api.create_repo(repo_id=repo_id, exist_ok=True, private=private)
-            return api.upload_folder(repo_id=repo_id, folder_path=tmp_dir, commit_message=commit_message, **kwargs)
+            # Synchronous upload returns CommitInfo (a Future only with run_as_future=True,
+            # rejected above since it would outlive the temporary staging directory).
+            commit_info = api.upload_folder(
+                repo_id=repo_id, folder_path=tmp_dir, commit_message=commit_message, **kwargs
+            )
+            return commit_info.commit_url
 
     @staticmethod
     def export_to_gguf_dict(tokenizer: CustomTokenizer, model_name: str = "llama") -> Dict[str, Any]:
