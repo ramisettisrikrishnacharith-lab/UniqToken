@@ -112,9 +112,11 @@ class PushToHubTests(unittest.TestCase):
             self.assertNotIn("private", upload_kwargs)
 
     def test_push_to_hub_rejects_invalid_repo_id(self) -> None:
-        for bad_repo_id in ("", "noslash"):
+        for bad_repo_id in ("", "noslash", "owner/", "/model", "owner/model/extra"):
             with self.assertRaises(ValueError):
                 HuggingFaceExporter.push_to_hub(self.tokenizer, bad_repo_id)
+        with self.assertRaises(ValueError):
+            HuggingFaceExporter.push_to_hub(self.tokenizer, None)  # type: ignore[arg-type]
 
     def test_push_to_hub_rejects_run_as_future(self) -> None:
         # A background Future would read from the temporary staging directory after it is deleted.

@@ -256,12 +256,12 @@ class HuggingFaceExporter:
             The commit URL of the completed synchronous upload.
 
         Raises:
-            ValueError: If ``repo_id`` is empty or not of the form ``"owner/model"``,
+            ValueError: If ``repo_id`` is not exactly ``"owner/model"`` (two nonempty parts),
                 or if ``run_as_future=True`` is passed.
             ImportError: If ``huggingface_hub`` is not installed. Run
                 ``pip install "uniqtoken[huggingface]"``.
         """
-        if not repo_id or "/" not in repo_id:
+        if not isinstance(repo_id, str) or repo_id.count("/") != 1 or any(not part for part in repo_id.split("/")):
             raise ValueError(f"repo_id must look like 'owner/model', got {repo_id!r}")
         if kwargs.get("run_as_future"):
             raise ValueError(
