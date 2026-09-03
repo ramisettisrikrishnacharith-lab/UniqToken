@@ -308,14 +308,25 @@ def _colorize_tokens(tokens: List[str], use_color: bool) -> str:
     return "".join(pills)
 
 
+def _escape_token_bytes(raw: bytes) -> str:
+    """Renders raw token bytes as text, escaping incomplete UTF-8 sequences instead of replacing them."""
+    return raw.decode("utf-8", errors="backslashreplace")
+
+
 def _tiktoken_tokens(text: str, encoding_name: str = "cl100k_base") -> Optional[List[str]]:
-    """Tokenizes with tiktoken, returning None when the optional dependency is missing."""
+    """Tokenizes with tiktoken, returning None when the optional dependency is missing.
+
+    Decodes each token's raw bytes: decoding single IDs as text would replace
+    incomplete UTF-8 sequences with U+FFFD. Literal special-token text is treated
+    as ordinary input.
+    """
     try:
         import tiktoken
     except ImportError:
         return None
     encoding = tiktoken.get_encoding(encoding_name)
-    return [encoding.decode([token_id]) for token_id in encoding.encode(text)]
+    token_ids = encoding.encode(text, disallowed_special=())
+    return [_escape_token_bytes(raw) for raw in encoding.decode_tokens_bytes(token_ids)]
 
 
 def _demo_tokenizer(text: str) -> CustomTokenizer:
