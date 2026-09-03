@@ -228,6 +228,31 @@ class HuggingFaceExporter:
         with open(out_path / "tokenizer_config.json", "w", encoding="utf-8") as f:
             json.dump(config_json, f, ensure_ascii=False, indent=2)
 
+    @classmethod
+    def push_to_hub(
+        cls,
+        tokenizer: CustomTokenizer,
+        repo_id: str,
+        token: Optional[str] = None,
+        commit_message: str = "Upload UniqToken model",
+        **kwargs: Any,
+    ) -> None:
+        """Uploads the HuggingFace-compatible tokenizer files directly to the Hugging Face Hub."""
+        try:
+            from huggingface_hub import HfApi
+        except ImportError as exc:
+            raise ImportError(
+                "huggingface_hub is required to use push_to_hub. Run `pip install huggingface_hub`."
+            ) from exc
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cls.save_hf_pretrained(tokenizer, tmp_dir)
+            api = HfApi(token=token)
+            api.create_repo(repo_id=repo_id, exist_ok=True)
+            api.upload_folder(repo_id=repo_id, folder_path=tmp_dir, commit_message=commit_message, **kwargs)
+
     @staticmethod
     def export_to_gguf_dict(tokenizer: CustomTokenizer, model_name: str = "llama") -> Dict[str, Any]:
         """
