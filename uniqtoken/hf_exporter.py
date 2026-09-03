@@ -253,7 +253,9 @@ class HuggingFaceExporter:
                 ``revision``).
 
         Returns:
-            The commit URL of the completed synchronous upload.
+            The commit URL of the completed synchronous upload, or the PR URL
+            string when ``multi_commits=True`` is passed (that mode returns the
+            PR URL instead of a ``CommitInfo``).
 
         Raises:
             ValueError: If ``repo_id`` is not exactly ``"owner/model"`` (two nonempty parts),
@@ -301,9 +303,12 @@ class HuggingFaceExporter:
             api.create_repo(repo_id=repo_id, exist_ok=True, private=private)
             # Synchronous upload returns CommitInfo (a Future only with run_as_future=True,
             # rejected above since it would outlive the temporary staging directory).
+            # With multi_commits=True the API instead returns the PR URL string directly.
             commit_info = api.upload_folder(
                 repo_id=repo_id, folder_path=tmp_dir, commit_message=commit_message, **kwargs
             )
+            if isinstance(commit_info, str):
+                return commit_info
             return commit_info.commit_url
 
     @staticmethod

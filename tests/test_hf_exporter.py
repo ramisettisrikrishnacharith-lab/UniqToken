@@ -128,6 +128,20 @@ class PushToHubTests(unittest.TestCase):
             mock_api.create_repo.assert_not_called()
             mock_api.upload_folder.assert_not_called()
 
+    def test_push_to_hub_returns_pr_url_for_multi_commits(self) -> None:
+        # multi_commits=True mode returns the PR URL string instead of a CommitInfo.
+        pr_url = "https://huggingface.co/test-user/test-repo/discussions/1"
+        with _huggingface_hub_module(), patch("huggingface_hub.HfApi") as mock_hf_api:
+            mock_api = MagicMock()
+            mock_api.upload_folder.return_value = pr_url
+            mock_hf_api.return_value = mock_api
+
+            result = HuggingFaceExporter.push_to_hub(self.tokenizer, "test-user/test-repo", multi_commits=True)
+
+            self.assertEqual(result, pr_url)
+            _, upload_kwargs = mock_api.upload_folder.call_args
+            self.assertTrue(upload_kwargs["multi_commits"])
+
     def test_push_to_hub_missing_dependency_raises_helpful_import_error(self) -> None:
         with patch.dict(sys.modules, {"huggingface_hub": None}):
             with self.assertRaises(ImportError) as ctx:
