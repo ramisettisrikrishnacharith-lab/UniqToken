@@ -2,25 +2,30 @@ from __future__ import annotations
 
 """Unit tests for HuggingFaceExporter.push_to_hub and CustomTokenizer.push_to_hub."""
 
+import contextlib
 import os
 import sys
 import types
 import unittest
-from typing import Any
+from typing import Any, Iterator
 from unittest.mock import MagicMock, patch
 
 from uniqtoken.hf_exporter import HuggingFaceExporter
 from uniqtoken.tokenizer import CustomTokenizer
 
-# Ensure `patch("huggingface_hub.HfApi")` works even when the optional
-# dependency is not installed (the zero-dependency rule). If the real
-# package exists this is a no-op.
-try:
-    import huggingface_hub  # noqa: F401
-except ImportError:  # pragma: no cover - env without optional dep
-    _stub = types.ModuleType("huggingface_hub")
-    _stub.HfApi = MagicMock  # type: ignore[attr-defined]
-    sys.modules["huggingface_hub"] = _stub
+
+@contextlib.contextmanager
+def _huggingface_hub_module() -> Iterator[Any]:
+    """Yields an importable ``huggingface_hub`` module without leaking a stub into ``sys.modules``."""
+    try:
+        import huggingface_hub as real_hub
+
+        yield real_hub
+    except ImportError:
+        fake_hub = types.ModuleType("huggingface_hub")
+        fake_hub.HfApi = MagicMock  # type: ignore[attr-defined]
+        with patch.dict(sys.modules, {"huggingface_hub": fake_hub}):
+            yield fake_hub
 
 
 def _build_tiny_tokenizer() -> CustomTokenizer:
@@ -35,9 +40,15 @@ def _build_tiny_tokenizer() -> CustomTokenizer:
 
 
 class PushToHubTests(unittest.TestCase):
+    tokenizer: CustomTokenizer
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tokenizer = _build_tiny_tokenizer()
+
     def test_push_to_hub_calls_create_repo_and_upload_folder(self) -> None:
-        tokenizer = _build_tiny_tokenizer()
         captured: dict[str, Any] = {}
+        commit_url = "https://huggingface.co/test-user/test-repo/commit/abc123"
 
         def _upload_folder_side_effect(**kwargs: Any) -> str:
             captured["kwargs"] = kwargs
@@ -46,15 +57,17 @@ class PushToHubTests(unittest.TestCase):
             captured["staged_files"] = sorted(os.listdir(folder))
             with open(os.path.join(folder, "README.md"), encoding="utf-8") as f:
                 captured["readme"] = f.read()
-            return "https://huggingface.co/test-user/test-repo/commit/abc123"
+            return commit_url
 
-        with patch("huggingface_hub.HfApi") as mock_hf_api:
+        with _huggingface_hub_module(), patch("huggingface_hub.HfApi") as mock_hf_api:
             mock_api = MagicMock()
             mock_api.upload_folder.side_effect = _upload_folder_side_effect
             mock_hf_api.return_value = mock_api
 
-            HuggingFaceExporter.push_to_hub(tokenizer, "test-user/test-repo", token="hf_test_token")
+            result = HuggingFaceExporter.push_to_hub(self.tokenizer, "test-user/test-repo", token="hf_test_token")
 
+            # The upload commit URL is returned for CI logs and verification.
+            self.assertEqual(result, commit_url)
             # HfApi instantiated with the provided token.
             mock_hf_api.assert_called_once_with(token="hf_test_token")
             # Repo is created idempotently; visibility is set at creation time.
@@ -72,15 +85,17 @@ class PushToHubTests(unittest.TestCase):
         self.assertIn("tokenizer_config.json", captured["staged_files"])
         self.assertIn("README.md", captured["staged_files"])
         self.assertIn("test-user/test-repo", captured["readme"])
+        self.assertIn(f"vocab_size: {self.tokenizer.vocab_size}", captured["readme"])
+        self.assertIn(f"byte_fallback: {self.tokenizer.model.byte_fallback}", captured["readme"])
+        self.assertIn(f"unk_token: {self.tokenizer.model.unk_token}", captured["readme"])
 
     def test_push_to_hub_forwards_commit_message_and_kwargs(self) -> None:
-        tokenizer = _build_tiny_tokenizer()
-        with patch("huggingface_hub.HfApi") as mock_hf_api:
+        with _huggingface_hub_module(), patch("huggingface_hub.HfApi") as mock_hf_api:
             mock_api = MagicMock()
             mock_hf_api.return_value = mock_api
 
             HuggingFaceExporter.push_to_hub(
-                tokenizer,
+                self.tokenizer,
                 "org/model",
                 token=None,
                 commit_message="Custom message",
@@ -95,20 +110,26 @@ class PushToHubTests(unittest.TestCase):
             self.assertEqual(upload_kwargs["commit_message"], "Custom message")
             self.assertNotIn("private", upload_kwargs)
 
+    def test_push_to_hub_rejects_invalid_repo_id(self) -> None:
+        for bad_repo_id in ("", "noslash"):
+            with self.assertRaises(ValueError):
+                HuggingFaceExporter.push_to_hub(self.tokenizer, bad_repo_id)
+
     def test_push_to_hub_missing_dependency_raises_helpful_import_error(self) -> None:
-        tokenizer = _build_tiny_tokenizer()
         with patch.dict(sys.modules, {"huggingface_hub": None}):
             with self.assertRaises(ImportError) as ctx:
-                HuggingFaceExporter.push_to_hub(tokenizer, "test-user/test-repo")
-        self.assertIn("pip install huggingface_hub", str(ctx.exception))
+                HuggingFaceExporter.push_to_hub(self.tokenizer, "test-user/test-repo")
+        self.assertIn('pip install "uniqtoken[huggingface]"', str(ctx.exception))
 
     def test_custom_tokenizer_push_to_hub_delegates_to_exporter(self) -> None:
-        tokenizer = _build_tiny_tokenizer()
-        with patch.object(HuggingFaceExporter, "push_to_hub") as mock_push:
-            tokenizer.push_to_hub("test-user/test-repo", token="hf_tok", commit_message="msg", private=True)
-            mock_push.assert_called_once_with(
-                tokenizer, "test-user/test-repo", token="hf_tok", commit_message="msg", private=True
+        with patch.object(HuggingFaceExporter, "push_to_hub", return_value="https://hub/commit/1") as mock_push:
+            result = self.tokenizer.push_to_hub(
+                "test-user/test-repo", token="hf_tok", commit_message="msg", private=True
             )
+            mock_push.assert_called_once_with(
+                self.tokenizer, "test-user/test-repo", token="hf_tok", commit_message="msg", private=True
+            )
+            self.assertEqual(result, "https://hub/commit/1")
 
 
 if __name__ == "__main__":

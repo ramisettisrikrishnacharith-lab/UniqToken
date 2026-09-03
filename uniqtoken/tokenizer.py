@@ -845,11 +845,23 @@ class CustomTokenizer:
         commit_message: str = "Upload UniqToken model",
         private: bool = False,
         **kwargs: Any,
-    ) -> None:
-        """Pushes the HuggingFace-compatible tokenizer files to the Hugging Face Hub."""
+    ) -> str:
+        """Pushes the HuggingFace-compatible tokenizer files to the Hugging Face Hub.
+
+        Args:
+            repo_id: Hub repository id of the form ``"owner/model"``.
+            token: Optional Hub access token used for authentication.
+            commit_message: Commit message recorded for the upload commit.
+            private: Repository visibility applied when the repo is created. Has no
+                effect on an already existing repo.
+            **kwargs: Forwarded to ``HfApi.upload_folder``.
+
+        Returns:
+            The upload commit URL returned by ``HfApi.upload_folder``.
+        """
         from .hf_exporter import HuggingFaceExporter
 
-        HuggingFaceExporter.push_to_hub(
+        return HuggingFaceExporter.push_to_hub(
             self, repo_id, token=token, commit_message=commit_message, private=private, **kwargs
         )
 
