@@ -235,6 +235,7 @@ class HuggingFaceExporter:
         repo_id: str,
         token: Optional[str] = None,
         commit_message: str = "Upload UniqToken model",
+        private: bool = False,
         **kwargs: Any,
     ) -> None:
         """Uploads the HuggingFace-compatible tokenizer files directly to the Hugging Face Hub."""
@@ -249,8 +250,25 @@ class HuggingFaceExporter:
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             cls.save_hf_pretrained(tokenizer, tmp_dir)
+            model_card = (
+                "---\n"
+                "library_name: uniqtoken\n"
+                "tags:\n"
+                "- tokenizer\n"
+                "- unigram\n"
+                "---\n"
+                "# %s\n\n"
+                "UniqToken tokenizer exported with `HuggingFaceExporter.save_hf_pretrained`.\n\n"
+                "## Usage\n\n"
+                "```python\n"
+                "from transformers import AutoTokenizer\n\n"
+                'tokenizer = AutoTokenizer.from_pretrained("%s")\n'
+                "```\n" % (repo_id, repo_id)
+            )
+            Path(tmp_dir, "README.md").write_text(model_card, encoding="utf-8")
             api = HfApi(token=token)
-            api.create_repo(repo_id=repo_id, exist_ok=True)
+            # Repository visibility is set at creation time: upload_folder accepts no `private` argument.
+            api.create_repo(repo_id=repo_id, exist_ok=True, private=private)
             api.upload_folder(repo_id=repo_id, folder_path=tmp_dir, commit_message=commit_message, **kwargs)
 
     @staticmethod

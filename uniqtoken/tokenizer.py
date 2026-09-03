@@ -843,12 +843,15 @@ class CustomTokenizer:
         repo_id: str,
         token: Optional[str] = None,
         commit_message: str = "Upload UniqToken model",
+        private: bool = False,
         **kwargs: Any,
     ) -> None:
         """Pushes the HuggingFace-compatible tokenizer files to the Hugging Face Hub."""
         from .hf_exporter import HuggingFaceExporter
 
-        HuggingFaceExporter.push_to_hub(self, repo_id, token=token, commit_message=commit_message, **kwargs)
+        HuggingFaceExporter.push_to_hub(
+            self, repo_id, token=token, commit_message=commit_message, private=private, **kwargs
+        )
 
     def export_to_gguf(self, output_path: Optional[Union[str, Path]] = None, model_name: str = "llama") -> bytes:
         """
