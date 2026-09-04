@@ -43,8 +43,11 @@ jobs:
       - name: Clippy (wasm target)
         run: cargo clippy --manifest-path crates/uniqtoken_core/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features wasm -- -D warnings
 
-      - name: Rust unit tests (wasm feature)
+      - name: Rust unit tests (default + wasm features)
         run: cargo test --manifest-path crates/uniqtoken_core/Cargo.toml --features wasm
+
+      - name: Rust unit tests (wasm-only build)
+        run: cargo test --manifest-path crates/uniqtoken_core/Cargo.toml --no-default-features --features wasm
 
       - name: Install wasm-pack
         uses: jetli/wasm-pack-action@0d096b08b4e5a7de8c28de67e11e945404e9eefa # pinned v0.4.0

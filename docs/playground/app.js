@@ -29,6 +29,15 @@ function showError(message) {
   errorEl.textContent = message;
 }
 
+// wasm-bindgen errors surface as opaque JsValue objects, so coerce them into
+// a readable message instead of "[object Object]".
+function formatError(err) {
+  if (typeof err === "string") {
+    return err;
+  }
+  return err?.message ?? String(err);
+}
+
 // Versioned share payloads: "v1." marks deflate-compressed UTF-8 bytes,
 // while a bare payload keeps the legacy uncompressed encoding so links shared
 // by older versions keep working.
@@ -115,7 +124,10 @@ async function updateHash(text) {
   try {
     payload = await encodeHashPayload(text);
   } catch {
-    return; // keep the previous link rather than writing a broken one
+    // Keep the previous link, but say so: a silent failure would strand
+    // anyone holding the stale URL without explanation.
+    shareNoteEl.textContent = "Could not update the share link.";
+    return;
   }
   if (seq !== hashSeq) {
     return; // a newer keystroke already superseded this render
@@ -135,15 +147,17 @@ function render() {
     return;
   }
   const text = inputEl.value;
-  let tokens;
-  let ids;
+  // One encode per render: the result carries tokens, ids, and every metric,
+  // so a keystroke never re-runs the normalize-to-Viterbi pipeline per value.
+  let encoded;
   try {
-    tokens = Array.from(tokenizer.tokens(text));
-    ids = Array.from(tokenizer.token_ids(text));
+    encoded = tokenizer.encode(text);
   } catch (err) {
-    showError(`Tokenization failed: ${err}`);
+    showError(`Tokenization failed: ${formatError(err)}`);
     return;
   }
+  const tokens = Array.from(encoded.tokens);
+  const ids = Array.from(encoded.ids);
 
   chipsEl.replaceChildren();
   tokens.forEach((token, index) => {
@@ -156,9 +170,9 @@ function render() {
   });
 
   metricEls.tokens.textContent = String(tokens.length);
-  metricEls.bpt.textContent = tokens.length === 0 ? "0.00" : tokenizer.bytes_per_token(text).toFixed(2);
-  metricEls.fallback.textContent = String(tokenizer.fallback_count(text));
-  metricEls.logprob.textContent = tokens.length === 0 ? "0.00" : tokenizer.avg_logprob(text).toFixed(3);
+  metricEls.bpt.textContent = tokens.length === 0 ? "0.00" : encoded.bytesPerToken.toFixed(2);
+  metricEls.fallback.textContent = String(encoded.fallbackCount);
+  metricEls.logprob.textContent = tokens.length === 0 ? "0.00" : encoded.avgLogprob.toFixed(3);
 
   updateHash(text);
 }
@@ -191,7 +205,7 @@ async function boot() {
   document.getElementById("vocab-line").textContent = `Demo vocabulary: ${tokenizer.vocab_size()} entries.`;
 
   const shared = await decodeHash().catch((err) => {
-    showError(`Could not open the shared link: ${err}`);
+    showError(`Could not open the shared link: ${formatError(err)}`);
     return "";
   });
   inputEl.value = shared !== "" ? shared : "def calculate_fibonacci(n: int) -> int:\nprint('hello world 🌍')";

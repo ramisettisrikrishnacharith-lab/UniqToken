@@ -10,7 +10,7 @@ use crate::normalizer::normalize_inner;
 use crate::pipeline::get_full_pretok_regex;
 use crate::trie::RustPrefixTrie;
 use crate::viterbi::decode_cached;
-use js_sys::Array;
+use js_sys::{Array, Object, Reflect};
 use wasm_bindgen::prelude::*;
 
 /// Demo vocabulary: `[token, log_probability, token_id]` triples with IDs
@@ -131,48 +131,41 @@ impl PlaygroundTokenizer {
             .map_err(|err| JsValue::from_str(&err.to_string()))
     }
 
-    /// Token strings for the input text.
-    pub fn tokens(&self, text: &str) -> Result<Array, JsValue> {
-        self.encode(text).map(|pieces| {
-            pieces
-                .iter()
-                .map(|piece| JsValue::from_str(&piece.token))
-                .collect()
-        })
-    }
-
-    /// Token IDs parallel to [`PlaygroundTokenizer::tokens`].
-    pub fn token_ids(&self, text: &str) -> Result<Array, JsValue> {
-        self.encode(text).map(|pieces| {
-            pieces.iter().map(|piece| JsValue::from(piece.id)).collect()
-        })
-    }
-
-    /// Number of tokens for the input text.
-    pub fn token_count(&self, text: &str) -> Result<usize, JsValue> {
-        self.encode(text).map(|pieces| pieces.len())
-    }
-
-    /// Number of byte-fallback tokens for the input text.
-    pub fn fallback_count(&self, text: &str) -> Result<usize, JsValue> {
-        self.encode(text)
-            .map(|pieces| pieces.iter().filter(|piece| piece.byte_fallback).count())
-    }
-
-    /// Raw UTF-8 bytes per token (0.0 for empty input).
-    pub fn bytes_per_token(&self, text: &str) -> Result<f64, JsValue> {
-        self.encode(text).map(|pieces| {
-            if pieces.is_empty() {
-                0.0
-            } else {
-                text.len() as f64 / pieces.len() as f64
-            }
-        })
-    }
-
-    /// Mean token log probability (0.0 for empty input).
-    pub fn avg_logprob(&self, text: &str) -> Result<f64, JsValue> {
-        self.encode(text).map(|pieces| self.engine.avg_logprob(&pieces))
+    /// Encodes the input once, returning `{tokens, ids, fallbackCount,
+    /// bytesPerToken, avgLogprob}` so callers never re-run the
+    /// normalize-to-Viterbi pipeline once per metric.
+    pub fn encode(&self, text: &str) -> Result<JsValue, JsValue> {
+        let pieces = self.encode_pieces(text)?;
+        let tokens: Array = pieces
+            .iter()
+            .map(|piece| JsValue::from_str(&piece.token))
+            .collect();
+        let ids: Array = pieces.iter().map(|piece| JsValue::from(piece.id)).collect();
+        let fallback_count = pieces.iter().filter(|piece| piece.byte_fallback).count() as u32;
+        let bytes_per_token = if pieces.is_empty() {
+            0.0
+        } else {
+            text.len() as f64 / pieces.len() as f64
+        };
+        let result = Object::new();
+        Reflect::set(&result, &JsValue::from_str("tokens"), &tokens)?;
+        Reflect::set(&result, &JsValue::from_str("ids"), &ids)?;
+        Reflect::set(
+            &result,
+            &JsValue::from_str("fallbackCount"),
+            &JsValue::from(fallback_count),
+        )?;
+        Reflect::set(
+            &result,
+            &JsValue::from_str("bytesPerToken"),
+            &JsValue::from(bytes_per_token),
+        )?;
+        Reflect::set(
+            &result,
+            &JsValue::from_str("avgLogprob"),
+            &JsValue::from(self.engine.avg_logprob(&pieces)),
+        )?;
+        Ok(result.into())
     }
 
     /// Number of entries in the embedded demo vocabulary.
@@ -180,7 +173,7 @@ impl PlaygroundTokenizer {
         self.engine.vocab_size()
     }
 
-    fn encode(&self, text: &str) -> Result<Vec<Piece>, JsValue> {
+    fn encode_pieces(&self, text: &str) -> Result<Vec<Piece>, JsValue> {
         self.engine
             .pieces(text)
             .map_err(|err| JsValue::from_str(&err.to_string()))
