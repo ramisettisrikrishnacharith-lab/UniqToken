@@ -13,9 +13,10 @@ const MAX_HASH_CHARS = 4000;
 // Bounds against decompression bombs (CWE-409): a crafted share fragment must
 // not inflate into an unbounded in-memory buffer. Both caps comfortably exceed
 // anything the link writer emits (encoded payloads are capped at
-// MAX_HASH_CHARS), so legitimate links are unaffected.
+// MAX_HASH_CHARS), so legitimate links are unaffected. The writer enforces the
+// same byte bound up front, so every link it emits is also readable.
 const MAX_PAYLOAD_CHARS = MAX_HASH_CHARS;
-const MAX_STREAM_BYTES = 262144; // 256 KiB of streamed output, either direction
+const MAX_STREAM_BYTES = 262144; // 256 KiB of share-link input or streamed codec output
 
 const inputEl = document.getElementById("input");
 const chipsEl = document.getElementById("chips");
@@ -100,6 +101,14 @@ async function inflateBytes(bytes) {
 
 async function encodeHashPayload(text) {
   const bytes = new TextEncoder().encode(text);
+  // Writer/reader consistency: the reader caps inflated output at
+  // MAX_STREAM_BYTES, so refuse larger inputs here instead of emitting a link
+  // that fails to open.
+  if (bytes.length > MAX_STREAM_BYTES) {
+    const err = new Error("input too long for a shareable link");
+    err.code = "SHARE_LINK_TOO_LONG";
+    throw err;
+  }
   if (typeof CompressionStream !== "undefined") {
     try {
       return HASH_VERSION + base64UrlEncode(await deflateBytes(bytes));
@@ -140,10 +149,13 @@ async function updateHash(text) {
   let payload;
   try {
     payload = await encodeHashPayload(text);
-  } catch {
+  } catch (err) {
     // Keep the previous link, but say so: a silent failure would strand
     // anyone holding the stale URL without explanation.
-    shareNoteEl.textContent = "Could not update the share link.";
+    shareNoteEl.textContent =
+      err?.code === "SHARE_LINK_TOO_LONG"
+        ? "Input too long for a shareable link — the URL was left unchanged."
+        : "Could not update the share link.";
     return;
   }
   if (seq !== hashSeq) {
