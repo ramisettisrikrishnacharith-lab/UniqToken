@@ -10,6 +10,13 @@
 const DEBOUNCE_MS = 50;
 const MAX_HASH_CHARS = 4000;
 
+// Bounds against decompression bombs (CWE-409): a crafted share fragment must
+// not inflate into an unbounded in-memory buffer. Both caps comfortably exceed
+// anything the link writer emits (encoded payloads are capped at
+// MAX_HASH_CHARS), so legitimate links are unaffected.
+const MAX_PAYLOAD_CHARS = MAX_HASH_CHARS;
+const MAX_STREAM_BYTES = 262144; // 256 KiB of streamed output, either direction
+
 const inputEl = document.getElementById("input");
 const chipsEl = document.getElementById("chips");
 const errorEl = document.getElementById("error");
@@ -56,17 +63,22 @@ function base64UrlDecode(payload) {
   return Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
 }
 
-async function readStream(stream) {
+async function readStream(stream, limit) {
   const chunks = [];
   const reader = stream.getReader();
+  let total = 0;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) {
       break;
     }
+    total += value.length;
+    if (total > limit) {
+      reader.cancel().catch(() => {});
+      throw new Error("stream exceeded size limit");
+    }
     chunks.push(value);
   }
-  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
   const out = new Uint8Array(total);
   let offset = 0;
   for (const chunk of chunks) {
@@ -78,12 +90,12 @@ async function readStream(stream) {
 
 async function deflateBytes(bytes) {
   const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("deflate"));
-  return readStream(stream);
+  return readStream(stream, MAX_STREAM_BYTES);
 }
 
 async function inflateBytes(bytes) {
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate"));
-  return new TextDecoder().decode(await readStream(stream));
+  return new TextDecoder().decode(await readStream(stream, MAX_STREAM_BYTES));
 }
 
 async function encodeHashPayload(text) {
@@ -99,6 +111,11 @@ async function encodeHashPayload(text) {
 }
 
 async function decodeHashPayload(payload) {
+  // The link writer caps encoded payloads at MAX_HASH_CHARS, so anything
+  // longer is hand-crafted: reject it before allocating decode buffers.
+  if (payload.length > MAX_PAYLOAD_CHARS) {
+    throw new Error("share link is too long");
+  }
   if (payload.startsWith(HASH_VERSION)) {
     if (typeof DecompressionStream === "undefined") {
       throw new Error("this share link needs DecompressionStream support");
