@@ -126,6 +126,21 @@ h2 {
   color: #ffa8a8;
 }
 
+/* Both live regions stay in the accessibility tree from page load so screen
+   readers reliably announce the first message. Empty states collapse to zero
+   footprint without display:none (which would drop them from the tree). */
+#error:empty,
+.share-note:empty {
+  font-size: 0;
+  line-height: 0;
+  margin: 0;
+}
+
+.share-note {
+  color: var(--muted);
+  font-size: 14px;
+}
+
 footer {
   margin-top: 24px;
   color: var(--muted);

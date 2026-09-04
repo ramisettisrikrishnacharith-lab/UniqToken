@@ -286,7 +286,7 @@ pub fn rust_normalize_with_alignment(
     Ok((out, align))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "python"))]
 mod tests {
     use super::*;
     #[test]

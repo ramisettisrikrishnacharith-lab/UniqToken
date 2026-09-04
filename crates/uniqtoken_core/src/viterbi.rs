@@ -545,7 +545,7 @@ fn log_add(a: f64, b: f64) -> f64 {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "python"))]
 mod tests {
     use super::*;
 

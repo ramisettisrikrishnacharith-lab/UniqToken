@@ -13,6 +13,7 @@ const MAX_HASH_CHARS = 4000;
 const inputEl = document.getElementById("input");
 const chipsEl = document.getElementById("chips");
 const errorEl = document.getElementById("error");
+const shareNoteEl = document.getElementById("share-note");
 
 const metricEls = {
   tokens: document.getElementById("m-tokens"),
@@ -26,32 +27,107 @@ let debounceTimer = 0;
 
 function showError(message) {
   errorEl.textContent = message;
-  errorEl.hidden = false;
 }
 
-function encodeHash(text) {
-  const bytes = new TextEncoder().encode(text);
+// Versioned share payloads: "v1." marks deflate-compressed UTF-8 bytes,
+// while a bare payload keeps the legacy uncompressed encoding so links shared
+// by older versions keep working.
+const HASH_VERSION = "v1.";
+
+function base64UrlEncode(bytes) {
   let binary = "";
   for (const byte of bytes) {
     binary += String.fromCharCode(byte);
   }
-  const b64 = btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  return b64.length <= MAX_HASH_CHARS ? `#t=${b64}` : "";
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function decodeHash() {
-  const match = location.hash.match(/^#t=([A-Za-z0-9\-_]+)$/);
+function base64UrlDecode(payload) {
+  const binary = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+}
+
+async function readStream(stream) {
+  const chunks = [];
+  const reader = stream.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    chunks.push(value);
+  }
+  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+async function deflateBytes(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("deflate"));
+  return readStream(stream);
+}
+
+async function inflateBytes(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate"));
+  return new TextDecoder().decode(await readStream(stream));
+}
+
+async function encodeHashPayload(text) {
+  const bytes = new TextEncoder().encode(text);
+  if (typeof CompressionStream !== "undefined") {
+    try {
+      return HASH_VERSION + base64UrlEncode(await deflateBytes(bytes));
+    } catch {
+      // Fall through to the legacy uncompressed encoding below.
+    }
+  }
+  return base64UrlEncode(bytes);
+}
+
+async function decodeHashPayload(payload) {
+  if (payload.startsWith(HASH_VERSION)) {
+    if (typeof DecompressionStream === "undefined") {
+      throw new Error("this share link needs DecompressionStream support");
+    }
+    return inflateBytes(base64UrlDecode(payload.slice(HASH_VERSION.length)));
+  }
+  return new TextDecoder().decode(base64UrlDecode(payload));
+}
+
+async function decodeHash() {
+  const match = location.hash.match(/^#t=([A-Za-z0-9\-_.]+)$/);
   if (!match) {
     return "";
   }
+  return decodeHashPayload(match[1]);
+}
+
+let hashSeq = 0;
+
+async function updateHash(text) {
+  const seq = ++hashSeq;
+  let payload;
   try {
-    const b64 = match[1].replace(/-/g, "+").replace(/_/g, "/");
-    const binary = atob(b64);
-    const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
-    return new TextDecoder().decode(bytes);
+    payload = await encodeHashPayload(text);
   } catch {
-    return "";
+    return; // keep the previous link rather than writing a broken one
   }
+  if (seq !== hashSeq) {
+    return; // a newer keystroke already superseded this render
+  }
+  if (payload.length > MAX_HASH_CHARS) {
+    // Leave the URL untouched and say so: silently dropping share state
+    // would strand anyone holding the stale link.
+    shareNoteEl.textContent = "Input too long for a shareable link — the URL was left unchanged.";
+    return;
+  }
+  shareNoteEl.textContent = "";
+  history.replaceState(null, "", `#t=${payload}`);
 }
 
 function render() {
@@ -84,8 +160,7 @@ function render() {
   metricEls.fallback.textContent = String(tokenizer.fallback_count(text));
   metricEls.logprob.textContent = tokens.length === 0 ? "0.00" : tokenizer.avg_logprob(text).toFixed(3);
 
-  const hash = encodeHash(text);
-  history.replaceState(null, "", hash === "" ? location.pathname + location.search : hash);
+  updateHash(text);
 }
 
 function scheduleRender() {
@@ -115,7 +190,10 @@ async function boot() {
 
   document.getElementById("vocab-line").textContent = `Demo vocabulary: ${tokenizer.vocab_size()} entries.`;
 
-  const shared = decodeHash();
+  const shared = await decodeHash().catch((err) => {
+    showError(`Could not open the shared link: ${err}`);
+    return "";
+  });
   inputEl.value = shared !== "" ? shared : "def calculate_fibonacci(n: int) -> int:\nprint('hello world 🌍')";
   inputEl.addEventListener("input", scheduleRender);
   render();

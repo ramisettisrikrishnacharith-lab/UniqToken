@@ -204,9 +204,9 @@ mod tests {
         );
         for byte in 0..=255u8 {
             let token = format!("<0x{byte:02X}>");
-            assert!(engine.trie.contains(&token), "missing byte token {token}");
+            assert!(engine.trie.exact_metadata(&token).is_some(), "missing byte token {token}");
         }
-        assert!(engine.trie.contains(UNK_TOKEN));
+        assert!(engine.trie.exact_metadata(UNK_TOKEN).is_some());
     }
 
     #[test]
